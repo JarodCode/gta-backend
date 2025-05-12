@@ -11,47 +11,26 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-
-    - name: Setup Deno
-      uses: denoland/setup-deno@v1
       with:
-        deno-version: 1.x
+        fetch-depth: 0  # Fetch all history for proper git push
 
-    - name: Cache dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/deno
-        key: ${{ runner.os }}-deno-${{ hashFiles('**/deps.ts') }}
-        restore-keys: |
-          ${{ runner.os }}-deno-
-
-    # Optional: Bundle application for deployment
-    - name: Bundle application
-      run: deno bundle main.ts app.js
-
-    # Setup SSH for deployment
+    # Set up SSH for Dokku deployment
     - name: Install SSH key
       uses: shimataro/ssh-key-action@v2
       with:
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        known_hosts: ${{ secrets.KNOWN_HOSTS }}
+        key: ${{ secrets.DOKKU_SSH_PRIVATE_KEY }}
+        known_hosts: ${{ secrets.DOKKU_KNOWN_HOSTS }}
         if_key_exists: replace
 
-    # Deploy to local cloud server
-    - name: Deploy to server
+    # Add Dokku as a remote and push
+    - name: Deploy to Dokku
       run: |
-        # Create deployment directory with timestamp
-        DEPLOY_DIR="gta-backend-$(date +%Y%m%d%H%M%S)"
+        # Set up Git user identity (required for the push)
+        git config --global user.email "github-actions@github.com"
+        git config --global user.name "GitHub Actions"
         
-        # Create deployment package
-        mkdir -p deploy
-        cp -r *.ts *.js deps.ts package.json config/ deploy/ 2>/dev/null || :
+        # Add Dokku as a remote
+        git remote add dokku dokku@${{ secrets.DOKKU_HOST }}:gta-backend
         
-        # Transfer files to server
-        scp -r deploy/ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/path/to/deployments/$DEPLOY_DIR
-        
-        # Execute remote deployment script
-        ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "cd /path/to/deployments/$DEPLOY_DIR && ./deploy.sh && ln -sfn /path/to/deployments/$DEPLOY_DIR /path/to/deployments/current"
-        
-        # Restart service
-        ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "sudo systemctl restart gta-backend.service"
+        # Push to Dokku
+        git push dokku main:master -f
