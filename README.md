@@ -1,6 +1,7 @@
 # GameBoxd Backend
 
-Backend du projet GameBoxd, un site web de type Letterboxd pour les jeux vidéo. Cette API est développée en Deno sans framework.
+Backend du projet GameBoxd, un site web de type Letterboxd pour les jeux vidéo.
+Cette API est développée en Deno sans framework.
 
 ## Fonctionnalités
 

@@ -1,26 +1,19 @@
-# Use the official Deno image
-FROM denoland/deno:1.37.0
+FROM denoland/deno:1.32.4
 
-# Set working directory
+# The port that your application listens to.
+EXPOSE 8000
+
 WORKDIR /app
 
-# Copy dependency file
+# Cache the dependencies as a layer
 COPY deps.ts .
-# Cache the dependencies
 RUN deno cache deps.ts
 
-# Copy rest of the application
+# Add application source code
 COPY . .
 
-# Compile the app (optional, improves startup)
-RUN deno cache server.ts
+# Compile the app (optional, for faster startup)
+RUN deno cache main.ts
 
-# Create a non-root user to run the app and own app files
-RUN chown -R deno:deno /app
-USER deno
-
-# The port your app runs on
-EXPOSE 8080
-
-# Command to run the application
-CMD ["run", "--allow-net", "--allow-read", "--allow-env", "--allow-write", "server.ts"]
+# Run with necessary permissions
+CMD ["run", "--allow-net", "--allow-env", "--allow-read", "main.ts"]
