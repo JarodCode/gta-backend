@@ -1,0 +1,36 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [ dev ]
+  pull_request:
+    branches: [ dev ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup Deno
+      uses: denoland/setup-deno@v1
+      with:
+        deno-version: 1.x
+
+    - name: Verify formatting
+      run: deno fmt --check
+
+    - name: Run linter
+      run: deno lint
+
+    - name: Run tests
+      run: deno test --allow-env --allow-net --allow-read
+      
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/deno
+        key: ${{ runner.os }}-deno-${{ hashFiles('**/deps.ts') }}
+        restore-keys: |
+          ${{ runner.os }}-deno-
