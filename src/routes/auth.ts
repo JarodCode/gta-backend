@@ -1,180 +1,260 @@
-// auth.ts - Authentication routes
-import { Router, Context } from "https://deno.land/x/oak@v17.1.4/mod.ts";
-import { create as createJwt } from "https://deno.land/x/djwt/mod.ts";
-import { hashSync, compareSync } from "https://deno.land/x/bcrypt/mod.ts";
-import { executeQuery, executeQueryAndReturnResults, executeQueryAndReturnId } from "../database.ts";
+// auth.ts - User authentication routes
+import { Router } from "https://deno.land/x/oak@v17.1.4/mod.ts";
+import { executeQuery, executeQueryAndReturnId, executeQueryAndReturnResults } from "../database.ts";
+import { create, verify } from "https://deno.land/x/djwt@v3.0.0/mod.ts";
+import { encode as encodeHex } from "https://deno.land/std@0.201.0/encoding/hex.ts";
 
-const router = new Router({ prefix: "/api/auth" });
-const JWT_SECRET = await crypto.subtle.generateKey(
-  { name: "HMAC", hash: "SHA-512" },
-  true,
-  ["sign", "verify"]
-);
+const router = new Router();
+const SECRET_KEY = Deno.env.get("JWT_SECRET") || "super-secret-jwt-key-for-game-tracking-app";
 
-export function getJwtSecret() {
-  return JWT_SECRET;
+// Convert string to crypto key for JWT
+const getJwtKey = async () => {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(SECRET_KEY);
+  return await crypto.subtle.importKey(
+    "raw",
+    keyData,
+    { name: "HMAC", hash: "SHA-256" },
+    true,
+    ["sign", "verify"]
+  );
+};
+
+// Generate secure password hash
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return new TextDecoder().decode(encodeHex(new Uint8Array(hashBuffer)));
 }
 
-// Register new user
-router.post("/register", async (ctx: Context) => {
+// Check if username is already taken
+async function isUsernameTaken(username: string): Promise<boolean> {
+  const result = await executeQueryAndReturnResults<{ count: number }>(
+    "SELECT COUNT(*) as count FROM users WHERE username = ?",
+    [username]
+  );
+  return result[0].count > 0;
+}
+
+// Check if email is already taken
+async function isEmailTaken(email: string): Promise<boolean> {
+  const result = await executeQueryAndReturnResults<{ count: number }>(
+    "SELECT COUNT(*) as count FROM users WHERE email = ?",
+    [email]
+  );
+  return result[0].count > 0;
+}
+
+// Helper to set JSON response
+function setJsonResponse(ctx: any, status: number, data: any) {
+  ctx.response.status = status;
+  ctx.response.type = "application/json; charset=utf-8";
+  
+  // Ensure only clean JSON is sent
+  if (typeof data === "object") {
+    ctx.response.body = JSON.stringify(data);
+  } else {
+    ctx.response.body = JSON.stringify({ error: "Invalid response data" });
+  }
+}
+
+// Register a new user
+router.post("/register", async (ctx) => {
   try {
-    if (!ctx.request.hasBody) {
-      throw new Error("Request body is missing");
+    console.log("Processing registration request");
+    
+    // Parse request body
+    let body;
+    try {
+      body = await ctx.request.body.json();
+      console.log("Registration request parsed", { username: body.username, email: body.email });
+    } catch (e) {
+      console.error("Failed to parse registration request body:", e);
+      setJsonResponse(ctx, 400, { error: "Invalid request body. Expected JSON." });
+      return;
     }
-
-    const body = await ctx.request.body({ type: "json" }).value;
+    
     const { username, email, password } = body;
-
-    // Validate input
+    
+    // Basic validation
     if (!username || !email || !password) {
-      throw new Error("Username, email, and password are required");
+      console.log("Registration validation failed - missing fields");
+      setJsonResponse(ctx, 400, { error: "Username, email and password are required" });
+      return;
     }
-
-    if (password.length < 8) {
-      throw new Error("Password must be at least 8 characters long");
+    
+    if (password.length < 6) {
+      console.log("Registration validation failed - password too short");
+      setJsonResponse(ctx, 400, { error: "Password must be at least 6 characters" });
+      return;
     }
-
-    // Check if user already exists
-    const existingUsers = executeQueryAndReturnResults<{ count: number }>(
-      "SELECT COUNT(*) as count FROM users WHERE username = ? OR email = ?",
-      [username, email]
-    );
-
-    if (existingUsers[0].count > 0) {
-      throw new Error("Username or email already exists");
+    
+    // Check if username or email is already taken
+    if (await isUsernameTaken(username)) {
+      console.log("Registration failed - username already taken:", username);
+      setJsonResponse(ctx, 400, { error: "Username is already taken" });
+      return;
     }
-
-    // Hash password
-    const passwordHash = hashSync(password);
-
-    // Insert new user
-    const userId = executeQueryAndReturnId(
+    
+    if (await isEmailTaken(email)) {
+      console.log("Registration failed - email already taken:", email);
+      setJsonResponse(ctx, 400, { error: "Email is already taken" });
+      return;
+    }
+    
+    // Hash the password
+    const passwordHash = await hashPassword(password);
+    
+    // Insert the new user
+    console.log("Inserting new user into database");
+    const userId = await executeQueryAndReturnId(
       "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
       [username, email, passwordHash]
     );
-
+    
     // Generate JWT token
-    const token = await createJwt(
-      { alg: "HS512", typ: "JWT" },
-      { id: userId, username, exp: Date.now() / 1000 + 60 * 60 * 24 }, // 24 hours expiration
-      JWT_SECRET
+    console.log("Generating JWT token for new user");
+    const key = await getJwtKey();
+    const jwt = await create(
+      { alg: "HS256", typ: "JWT" },
+      { user_id: userId, username, exp: Date.now() + 30 * 24 * 60 * 60 * 1000 }, // 30 days expiration
+      key
     );
-
-    ctx.response.status = 201;
-    ctx.response.body = {
-      success: true,
-      message: "User registered successfully",
-      data: {
-        id: userId,
-        username,
-        token,
-      },
-    };
-  } catch (err) {
-    ctx.response.status = 400;
-    ctx.response.body = {
-      success: false,
-      message: err.message || "Failed to register user",
-    };
+    
+    console.log("Registration successful for user:", username);
+    
+    // Format response as clean JSON
+    setJsonResponse(ctx, 201, { 
+      user: { id: userId, username, email },
+      token: jwt
+    });
+  } catch (error) {
+    console.error("Registration error:", error);
+    setJsonResponse(ctx, 500, { error: "Registration failed: " + error.message });
   }
 });
 
 // Login user
-router.post("/login", async (ctx: Context) => {
+router.post("/login", async (ctx) => {
   try {
-    if (!ctx.request.hasBody) {
-      throw new Error("Request body is missing");
-    }
-
-    const body = await ctx.request.body({ type: "json" }).value;
-    const { username, password } = body;
-
-    // Validate input
-    if (!username || !password) {
-      throw new Error("Username and password are required");
-    }
-
-    // Get user from database
-    const users = executeQueryAndReturnResults<{
-      id: number;
-      username: string;
-      password_hash: string;
-    }>("SELECT id, username, password_hash FROM users WHERE username = ?", [
-      username,
-    ]);
-
-    if (users.length === 0) {
-      throw new Error("Invalid username or password");
-    }
-
-    const user = users[0];
-
-    // Verify password
-    const isPasswordValid = compareSync(password, user.password_hash);
-    if (!isPasswordValid) {
-      throw new Error("Invalid username or password");
-    }
-
-    // Generate JWT token
-    const token = await createJwt(
-      { alg: "HS512", typ: "JWT" },
-      { id: user.id, username: user.username, exp: Date.now() / 1000 + 60 * 60 * 24 }, // 24 hours expiration
-      JWT_SECRET
-    );
-
-    ctx.response.status = 200;
-    ctx.response.body = {
-      success: true,
-      message: "Login successful",
-      data: {
-        id: user.id,
-        username: user.username,
-        token,
-      },
-    };
-  } catch (err) {
-    ctx.response.status = 400;
-    ctx.response.body = {
-      success: false,
-      message: err.message || "Failed to login",
-    };
-  }
-});
-
-// Get current user info
-router.get("/me", async (ctx: Context) => {
-  try {
-    // This endpoint requires authentication, so the user should be in ctx.state
-    const user = ctx.state.user;
+    console.log("Processing login request");
     
-    if (!user) {
-      throw new Error("User not found");
+    // Parse request body
+    let body;
+    try {
+      body = await ctx.request.body.json();
+      console.log("Login request parsed for username:", body.username);
+    } catch (e) {
+      console.error("Failed to parse login request body:", e);
+      setJsonResponse(ctx, 400, { error: "Invalid request body. Expected JSON." });
+      return;
     }
-
-    const users = executeQueryAndReturnResults<{
-      id: number;
-      username: string;
-      email: string;
-      avatar_url: string;
-      bio: string;
-    }>("SELECT id, username, email, avatar_url, bio FROM users WHERE id = ?", [user.id]);
-
+    
+    const { username, password } = body;
+    
+    // Basic validation
+    if (!username || !password) {
+      console.log("Login validation failed - missing fields");
+      setJsonResponse(ctx, 400, { error: "Username and password are required" });
+      return;
+    }
+    
+    // Check if username exists and get password hash
+    console.log("Querying database for user:", username);
+    const users = await executeQueryAndReturnResults<{ id: number, username: string, email: string, password_hash: string }>(
+      "SELECT id, username, email, password_hash FROM users WHERE username = ?",
+      [username]
+    );
+    
     if (users.length === 0) {
-      throw new Error("User not found");
+      console.log("Login failed - user not found:", username);
+      setJsonResponse(ctx, 401, { error: "Invalid username or password" });
+      return;
     }
-
-    ctx.response.status = 200;
-    ctx.response.body = {
-      success: true,
-      data: users[0],
-    };
-  } catch (err) {
-    ctx.response.status = 400;
-    ctx.response.body = {
-      success: false,
-      message: err.message || "Failed to get user info",
-    };
+    
+    const user = users[0];
+    
+    // Verify password
+    console.log("Verifying password for user:", username);
+    const passwordHash = await hashPassword(password);
+    if (passwordHash !== user.password_hash) {
+      console.log("Login failed - invalid password for user:", username);
+      setJsonResponse(ctx, 401, { error: "Invalid username or password" });
+      return;
+    }
+    
+    // Generate JWT token
+    console.log("Generating JWT token for user:", username);
+    const key = await getJwtKey();
+    const jwt = await create(
+      { alg: "HS256", typ: "JWT" },
+      { user_id: user.id, username: user.username, exp: Date.now() + 30 * 24 * 60 * 60 * 1000 }, // 30 days expiration
+      key
+    );
+    
+    console.log("Login successful for user:", username);
+    
+    // Format response as clean JSON
+    setJsonResponse(ctx, 200, { 
+      user: { id: user.id, username: user.username, email: user.email },
+      token: jwt
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    setJsonResponse(ctx, 500, { error: "Login failed: " + error.message });
   }
 });
 
-export const authRouter = router;
+// Get current user (verify token)
+router.get("/me", async (ctx) => {
+  try {
+    console.log("Processing /me request");
+    console.log("Headers:", Object.fromEntries(ctx.request.headers.entries()));
+    
+    // Get authorization header
+    const authHeader = ctx.request.headers.get("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      console.log("Auth failed - missing or invalid Authorization header");
+      setJsonResponse(ctx, 401, { error: "Unauthorized - missing or invalid token" });
+      return;
+    }
+    
+    // Extract token
+    const token = authHeader.split(" ")[1];
+    console.log("Token received, validating...");
+    
+    // Verify token
+    try {
+      const key = await getJwtKey();
+      const payload = await verify(token, key);
+      console.log("Token valid for user_id:", payload.user_id);
+      
+      // Get user details
+      console.log("Querying database for user details");
+      const users = await executeQueryAndReturnResults<{ id: number, username: string, email: string }>(
+        "SELECT id, username, email FROM users WHERE id = ?",
+        [payload.user_id]
+      );
+      
+      if (users.length === 0) {
+        console.log("User not found in database for id:", payload.user_id);
+        setJsonResponse(ctx, 404, { error: "User not found" });
+        return;
+      }
+      
+      console.log("User found, returning details for:", users[0].username);
+      
+      // Format response as clean JSON
+      setJsonResponse(ctx, 200, { user: users[0] });
+    } catch (error) {
+      console.error("Token validation error:", error);
+      setJsonResponse(ctx, 401, { error: "Invalid or expired token: " + error.message });
+    }
+  } catch (error) {
+    console.error("Auth verification error:", error);
+    setJsonResponse(ctx, 500, { error: "Authentication verification failed: " + error.message });
+  }
+});
+
+export default router; 

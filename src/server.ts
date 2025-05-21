@@ -1,62 +1,74 @@
-// server.ts - Main server file for GTA (Game Tracking App)
-import { Application, Router, Context, send } from "https://deno.land/x/oak@v17.1.4/mod.ts";
-import { oakCors } from "https://deno.land/x/cors/mod.ts";
-import { initDatabase } from "./database.ts";
-import { authRouter } from "./routes/auth.ts";
-import { chatRouter } from "./routes/chat.ts";
-import { setupWebsockets } from "./websockets/chat.ts";
-import { authMiddleware } from "./middleware/auth.ts";
-import { loggerMiddleware } from "./middleware/logger.ts";
+// server.ts - Simple static file server with no database connections
 
-// Initialize the database
-await initDatabase();
+import { Application, Router, send } from "https://deno.land/x/oak@v17.1.4/mod.ts";
+import { parse } from "https://deno.land/std@0.220.0/path/mod.ts";
 
+// Set up the server
 const app = new Application();
 const router = new Router();
 
-// Middlewares
-app.use(loggerMiddleware);
-app.use(oakCors({
-  origin: "https://localhost:3000", // Frontend URL
-  credentials: true,
-}));
-
-// API routes
-app.use(authRouter.routes());
-app.use(authRouter.allowedMethods());
-
-// Protected routes - require authentication
-app.use(authMiddleware);
-app.use(chatRouter.routes());
-app.use(chatRouter.allowedMethods());
-
-// Error handling
+// Log requests
 app.use(async (ctx, next) => {
+  console.log(`${ctx.request.method} ${ctx.request.url.pathname}`);
   try {
     await next();
   } catch (err) {
-    ctx.response.status = err.status || 500;
-    ctx.response.body = {
-      success: false,
-      message: err.message || "Internal Server Error",
-    };
-    console.error(`Error: ${err.message}`);
+    console.error(err);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal Server Error" };
   }
 });
 
-// Health check endpoint
-router.get("/api/health", (ctx: Context) => {
-  ctx.response.body = { status: "ok", timestamp: new Date() };
+// Enable CORS
+app.use(async (ctx, next) => {
+  ctx.response.headers.set("Access-Control-Allow-Origin", "*");
+  ctx.response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  ctx.response.headers.set("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  
+  if (ctx.request.method === "OPTIONS") {
+    ctx.response.status = 204;
+    return;
+  }
+  
+  await next();
 });
 
+// Static files from frontend directory
+router.get("/(.*)", async (ctx) => {
+  const path = ctx.params[0] || "";
+  
+  // Special case for root path
+  if (path === "") {
+    await send(ctx, "index.html", {
+      root: `${Deno.cwd()}/frontend`,
+    });
+    return;
+  }
+  
+  // Attempt to serve the file directly
+  try {
+    await send(ctx, path, {
+      root: `${Deno.cwd()}/frontend`,
+    });
+  } catch (e) {
+    // If file not found, serve index.html (for SPAs)
+    if (e instanceof Error && e.message.includes("Not Found")) {
+      console.log(`File not found: ${path}, serving index.html instead`);
+      await send(ctx, "index.html", {
+        root: `${Deno.cwd()}/frontend`,
+      });
+    } else {
+      throw e;
+    }
+  }
+});
+
+// Use router
 app.use(router.routes());
 app.use(router.allowedMethods());
 
-// Setup WebSockets for chat
-setupWebsockets(app);
-
 // Start the server
-const PORT = 8000;
-console.log(`Server running on http://localhost:${PORT}`);
+const port = Number(Deno.env.get("PORT") || 8000);
+console.log(`Server running on http://localhost:${port}`);
 
-await app.listen({ port: PORT });
+await app.listen({ port });
