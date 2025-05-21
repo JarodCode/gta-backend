@@ -1,11 +1,13 @@
-// auth.ts - User authentication routes
+// auth.ts - User authentication routes with bcrypt and cookie support
 import { Router } from "https://deno.land/x/oak@v17.1.4/mod.ts";
 import { executeQuery, executeQueryAndReturnId, executeQueryAndReturnResults } from "../database.ts";
 import { create, verify } from "https://deno.land/x/djwt@v3.0.0/mod.ts";
-import { encode as encodeHex } from "https://deno.land/std@0.201.0/encoding/hex.ts";
+import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 
 const router = new Router();
 const SECRET_KEY = Deno.env.get("JWT_SECRET") || "super-secret-jwt-key-for-game-tracking-app";
+const COOKIE_NAME = "auth_token";
+const COOKIE_OPTIONS = { httpOnly: true, secure: false, sameSite: "lax" as const };
 
 // Convert string to crypto key for JWT
 const getJwtKey = async () => {
@@ -20,12 +22,9 @@ const getJwtKey = async () => {
   );
 };
 
-// Generate secure password hash
+// Generate secure password hash with bcrypt
 async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  return new TextDecoder().decode(encodeHex(new Uint8Array(hashBuffer)));
+  return await bcrypt.hash(password);
 }
 
 // Check if username is already taken
@@ -57,6 +56,11 @@ function setJsonResponse(ctx: any, status: number, data: any) {
   } else {
     ctx.response.body = JSON.stringify({ error: "Invalid response data" });
   }
+}
+
+// Set authentication cookie
+function setAuthCookie(ctx: any, token: string) {
+  ctx.cookies.set(COOKIE_NAME, token, COOKIE_OPTIONS);
 }
 
 // Register a new user
@@ -103,7 +107,8 @@ router.post("/register", async (ctx) => {
       return;
     }
     
-    // Hash the password
+    // Hash the password with bcrypt
+    console.log("Hashing password with bcrypt");
     const passwordHash = await hashPassword(password);
     
     // Insert the new user
@@ -121,6 +126,9 @@ router.post("/register", async (ctx) => {
       { user_id: userId, username, exp: Date.now() + 30 * 24 * 60 * 60 * 1000 }, // 30 days expiration
       key
     );
+    
+    // Set authentication cookie
+    setAuthCookie(ctx, jwt);
     
     console.log("Registration successful for user:", username);
     
@@ -144,64 +152,88 @@ router.post("/login", async (ctx) => {
     let body;
     try {
       body = await ctx.request.body.json();
-      console.log("Login request parsed for username:", body.username);
+      console.log("Login request parsed", { username: body?.username || 'missing' });
     } catch (e) {
       console.error("Failed to parse login request body:", e);
       setJsonResponse(ctx, 400, { error: "Invalid request body. Expected JSON." });
       return;
     }
     
-    const { username, password } = body;
+    // Validate required fields
+    const { username, password } = body || {};
     
-    // Basic validation
     if (!username || !password) {
-      console.log("Login validation failed - missing fields");
+      console.log("Login validation failed - missing fields", { 
+        hasUsername: !!username, 
+        hasPassword: !!password 
+      });
       setJsonResponse(ctx, 400, { error: "Username and password are required" });
       return;
     }
     
-    // Check if username exists and get password hash
-    console.log("Querying database for user:", username);
-    const users = await executeQueryAndReturnResults<{ id: number, username: string, email: string, password_hash: string }>(
-      "SELECT id, username, email, password_hash FROM users WHERE username = ?",
-      [username]
-    );
-    
-    if (users.length === 0) {
-      console.log("Login failed - user not found:", username);
-      setJsonResponse(ctx, 401, { error: "Invalid username or password" });
-      return;
+    console.log("Looking up user in database for:", username);
+    try {
+      // Find the user
+      const users = await executeQueryAndReturnResults<{ id: number, username: string, email: string, password_hash: string }>(
+        "SELECT id, username, email, password_hash FROM users WHERE username = ?",
+        [username]
+      );
+      
+      console.log(`User lookup result: found ${users.length} users`);
+      
+      if (users.length === 0) {
+        console.log(`User not found: ${username}`);
+        setJsonResponse(ctx, 401, { error: "Invalid username or password" });
+        return;
+      }
+      
+      const user = users[0];
+      console.log(`Found user: ${user.username} (ID: ${user.id})`);
+      
+      try {
+        // Verify password using bcrypt
+        console.log("Verifying password");
+        const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+        
+        if (!isPasswordValid) {
+          console.log(`Invalid password for user: ${username}`);
+          setJsonResponse(ctx, 401, { error: "Invalid username or password" });
+          return;
+        }
+        
+        // Generate JWT token
+        console.log("Password verified, generating JWT token");
+        const key = await getJwtKey();
+        const jwt = await create(
+          { alg: "HS256", typ: "JWT" },
+          { user_id: user.id, username: user.username, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 }, // 7 days expiration
+          key
+        );
+        
+        // Set authentication cookie
+        setAuthCookie(ctx, jwt);
+        
+        console.log("Login successful for user:", username);
+        
+        // Return successful response
+        setJsonResponse(ctx, 200, {
+          token: jwt,
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email
+          }
+        });
+      } catch (passwordError) {
+        console.error("Password verification error:", passwordError);
+        setJsonResponse(ctx, 500, { error: "Authentication error: " + passwordError.message });
+      }
+    } catch (dbError) {
+      console.error("Database query error:", dbError);
+      setJsonResponse(ctx, 500, { error: "Database error: " + dbError.message });
     }
-    
-    const user = users[0];
-    
-    // Verify password
-    console.log("Verifying password for user:", username);
-    const passwordHash = await hashPassword(password);
-    if (passwordHash !== user.password_hash) {
-      console.log("Login failed - invalid password for user:", username);
-      setJsonResponse(ctx, 401, { error: "Invalid username or password" });
-      return;
-    }
-    
-    // Generate JWT token
-    console.log("Generating JWT token for user:", username);
-    const key = await getJwtKey();
-    const jwt = await create(
-      { alg: "HS256", typ: "JWT" },
-      { user_id: user.id, username: user.username, exp: Date.now() + 30 * 24 * 60 * 60 * 1000 }, // 30 days expiration
-      key
-    );
-    
-    console.log("Login successful for user:", username);
-    
-    // Format response as clean JSON
-    setJsonResponse(ctx, 200, { 
-      user: { id: user.id, username: user.username, email: user.email },
-      token: jwt
-    });
   } catch (error) {
-    console.error("Login error:", error);
+    console.error("Login route error:", error);
     setJsonResponse(ctx, 500, { error: "Login failed: " + error.message });
   }
 });
@@ -210,19 +242,27 @@ router.post("/login", async (ctx) => {
 router.get("/me", async (ctx) => {
   try {
     console.log("Processing /me request");
-    console.log("Headers:", Object.fromEntries(ctx.request.headers.entries()));
     
-    // Get authorization header
-    const authHeader = ctx.request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      console.log("Auth failed - missing or invalid Authorization header");
-      setJsonResponse(ctx, 401, { error: "Unauthorized - missing or invalid token" });
+    // Try to get token from cookie first
+    let token = ctx.cookies.get(COOKIE_NAME);
+    let source = "cookie";
+    
+    // If no cookie, try authorization header
+    if (!token) {
+      const authHeader = ctx.request.headers.get("Authorization");
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        token = authHeader.split(" ")[1];
+        source = "header";
+      }
+    }
+    
+    if (!token) {
+      console.log("Auth failed - no token found in cookie or header");
+      setJsonResponse(ctx, 401, { error: "Unauthorized - missing token" });
       return;
     }
     
-    // Extract token
-    const token = authHeader.split(" ")[1];
-    console.log("Token received, validating...");
+    console.log(`Token received from ${source}, validating...`);
     
     // Verify token
     try {
@@ -257,4 +297,16 @@ router.get("/me", async (ctx) => {
   }
 });
 
-export default router; 
+// Logout user
+router.post("/logout", async (ctx) => {
+  try {
+    // Clear the auth cookie
+    ctx.cookies.delete(COOKIE_NAME);
+    setJsonResponse(ctx, 200, { message: "Logged out successfully" });
+  } catch (error) {
+    console.error("Logout error:", error);
+    setJsonResponse(ctx, 500, { error: "Logout failed: " + error.message });
+  }
+});
+
+export default router;

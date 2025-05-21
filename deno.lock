@@ -11,6 +11,7 @@
       "jsr:@std/http@^1.0": "jsr:@std/http@1.0.15",
       "jsr:@std/media-types@^1.0": "jsr:@std/media-types@1.1.0",
       "jsr:@std/path@^1.0": "jsr:@std/path@1.0.9",
+      "npm:cors@^2.8.5": "npm:cors@2.8.5",
       "npm:path-to-regexp@^6.3.0": "npm:path-to-regexp@6.3.0"
     },
     "jsr": {
@@ -51,8 +52,23 @@
       }
     },
     "npm": {
+      "cors@2.8.5": {
+        "integrity": "sha512-KIHbLJqu73RGr/hnbrO9uBeixNGuvSQjul/jdFvS/KFSIH1hWVd1ng7zOHx+YrEfInLG7q4n6GHQ9cDtxv/P6g==",
+        "dependencies": {
+          "object-assign": "object-assign@4.1.1",
+          "vary": "vary@1.1.2"
+        }
+      },
+      "object-assign@4.1.1": {
+        "integrity": "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg==",
+        "dependencies": {}
+      },
       "path-to-regexp@6.3.0": {
         "integrity": "sha512-Yhpw4T9C6hPpgPeA28us07OJeqZ5EzQTkbfwuhsUg0c237RomFoETJgmp2sa3F/41gfLE6G5cqcYwznmeEeOlQ==",
+        "dependencies": {}
+      },
+      "vary@1.1.2": {
+        "integrity": "sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==",
         "dependencies": {}
       }
     }
@@ -310,5 +326,12 @@
     "https://deno.land/x/sqlite@v3.7.0/src/function.ts": "e4c83b8ec64bf88bafad2407376b0c6a3b54e777593c70336fb40d43a79865f2",
     "https://deno.land/x/sqlite@v3.7.0/src/query.ts": "69895232360b4254a8834e3bbea30bc3752cf691dba862f4a393e7a41a2e30eb",
     "https://deno.land/x/sqlite@v3.7.0/src/wasm.ts": "e79d0baa6e42423257fb3c7cc98091c54399254867e0f34a09b5bdef37bd9487"
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:cors@^2.8.5"
+      ]
+    }
   }
 }

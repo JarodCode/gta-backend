@@ -2,6 +2,7 @@
 import { Application, Router, send } from "https://deno.land/x/oak@v17.1.4/mod.ts";
 import authRoutes from "./src/routes/auth.ts";
 import * as path from "https://deno.land/std@0.201.0/path/mod.ts";
+import cors from 'cors';
 
 const app = new Application();
 const router = new Router();
@@ -50,6 +51,13 @@ app.use(async (ctx, next) => {
   // Continue to the next middleware
   await next();
 });
+
+app.use(cors({
+  origin: 'http://localhost:3000', // Your frontend URL
+  credentials: true,               // Important for cookies
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 // JSON response formatter middleware
 app.use(async (ctx, next) => {
