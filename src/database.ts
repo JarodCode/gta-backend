@@ -67,18 +67,35 @@ export async function initDatabase() {
 }
 
 export async function executeQuery(query: string, params: any[] = []) {
-  if (isPostgres) {
-    const client = await (db as Pool).connect();
-    try {
-      // Convert query placeholder style if needed
-      const pgQuery = query.replace(/\?/g, (_, i) => `$${i + 1}`);
-      return await client.queryArray(pgQuery, params);
-    } finally {
-      client.release();
+  console.log(`[DB] Executing query: ${query}`);
+  console.log(`[DB] With parameters: ${JSON.stringify(params)}`);
+  
+  try {
+    let result;
+    
+    if (isPostgres) {
+      const client = await (db as Pool).connect();
+      try {
+        // Convert query placeholder style if needed
+        const pgQuery = query.replace(/\?/g, (_, i) => `$${i + 1}`);
+        result = await client.queryArray(pgQuery, params);
+      } finally {
+        client.release();
+      }
+    } else {
+      // SQLite execution
+      result = db.query(query, params);
     }
-  } else {
-    // SQLite execution
-    return db.query(query, params);
+    
+    console.log(`[DB] Query result rows: ${result.rows?.length || 0}`);
+    if (result.rows && result.rows.length > 0) {
+      console.log(`[DB] First row sample: ${JSON.stringify(result.rows[0])}`);
+    }
+    
+    return result;
+  } catch (error) {
+    console.error(`[DB] Query error: ${error.message}`);
+    throw error;
   }
 }
 
