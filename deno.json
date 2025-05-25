@@ -1,5 +1,30 @@
 {
   "tasks": {
-    "dev": "deno run --watch main.js 8080"
+    "dev": "deno run --allow-net --allow-read --allow-write --allow-env --watch src/server.ts",
+    "start": "deno run --allow-net --allow-read --allow-write --allow-env src/server.ts",
+    "load-env": "deno run --allow-net --allow-read --allow-write --allow-env --watch src/load-env.ts"
+  },
+  "imports": {
+    "oak": "https://deno.land/x/oak@v17.1.4/mod.ts",
+    "oak/": "https://deno.land/x/oak@v17.1.4/",
+    "cors": "https://deno.land/x/cors@v1.2.2/mod.ts",
+    "postgres": "https://deno.land/x/postgres@v0.17.0/mod.ts",
+    "sqlite": "https://deno.land/x/sqlite@v3.7.0/mod.ts",
+    "cliffy": "https://deno.land/x/cliffy@v1.0.0-rc.3/mod.ts",
+    "dotenv": "https://deno.land/std@0.207.0/dotenv/mod.ts"
+  },
+  "lint": {
+    "include": ["src/"],
+    "exclude": ["node_modules/", ".git/"],
+    "rules": {
+      "tags": ["recommended"]
+    }
+  },
+  "fmt": {
+    "include": ["src/"],
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "singleQuote": false,
+    "useTabs": false
   }
 }
