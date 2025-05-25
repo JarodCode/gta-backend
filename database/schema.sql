@@ -79,4 +79,16 @@ CREATE INDEX IF NOT EXISTS idx_user_game_ratings_user_id ON user_game_ratings(us
 CREATE INDEX IF NOT EXISTS idx_user_game_ratings_game_id ON user_game_ratings(game_id);
 CREATE INDEX IF NOT EXISTS idx_game_tag_relations_game_id ON game_tag_relations(game_id);
 CREATE INDEX IF NOT EXISTS idx_game_tag_relations_tag_id ON game_tag_relations(tag_id);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id ON chat_messages(user_id); 
+CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id ON chat_messages(user_id);
+
+-- Create game_reviews table if it doesn't exist
+CREATE TABLE IF NOT EXISTS game_reviews (
+    id SERIAL PRIMARY KEY,
+    game_id TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+); 

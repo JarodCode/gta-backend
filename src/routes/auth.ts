@@ -7,7 +7,19 @@ import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 const router = new Router();
 const SECRET_KEY = Deno.env.get("JWT_SECRET") || "super-secret-jwt-key-for-game-tracking-app";
 const COOKIE_NAME = "auth_token";
-const COOKIE_OPTIONS = { httpOnly: true, secure: false, sameSite: "lax" as const };
+// Update cookie options to work with cross-domain requests
+const COOKIE_OPTIONS = { 
+  httpOnly: true,     // Prevent JavaScript access
+  secure: false,      // Set to true in production with HTTPS
+  sameSite: "lax" as const,  // Allow cookies for same-site and some cross-site requests
+  path: "/",          // Cookie available for all paths
+  maxAge: 30 * 24 * 60 * 60, // 30 days in seconds
+};
+
+// Function to get JWT secret for other modules
+export async function getJwtSecret(): Promise<string> {
+  return SECRET_KEY;
+}
 
 // Convert string to crypto key for JWT
 const getJwtKey = async () => {
@@ -58,8 +70,13 @@ function setJsonResponse(ctx: any, status: number, data: any) {
   }
 }
 
-// Set authentication cookie
+// Set authentication cookie - updated to handle cross-domain
 function setAuthCookie(ctx: any, token: string) {
+  // Get the origin from the request header
+  const origin = ctx.request.headers.get("Origin") || "";
+  console.log(`Setting cookie for request from origin: ${origin}`);
+  
+  // Set the cookie
   ctx.cookies.set(COOKIE_NAME, token, COOKIE_OPTIONS);
 }
 
@@ -244,7 +261,13 @@ router.get("/me", async (ctx) => {
     console.log("Processing /me request");
     
     // Try to get token from cookie first
-    let token = ctx.cookies.get(COOKIE_NAME);
+    let token: string | undefined;
+    try {
+      token = await ctx.cookies.get(COOKIE_NAME);
+    } catch (e) {
+      console.error("Error reading cookie:", e);
+      token = undefined;
+    }
     let source = "cookie";
     
     // If no cookie, try authorization header
@@ -266,6 +289,30 @@ router.get("/me", async (ctx) => {
     
     // Verify token
     try {
+      // Basic validation before passing to verify
+      if (typeof token !== 'string' || token.trim() === '') {
+        console.log("Invalid token format - empty or not a string");
+        try {
+          await ctx.cookies.delete(COOKIE_NAME); // Clear invalid cookie
+        } catch (e) {
+          console.error("Error deleting cookie:", e);
+        }
+        setJsonResponse(ctx, 401, { error: "Invalid token format" });
+        return;
+      }
+      
+      // Check if token has valid JWT format (header.payload.signature)
+      if (!token.includes('.') || token.split('.').length !== 3) {
+        console.log("Invalid JWT format - missing segments");
+        try {
+          await ctx.cookies.delete(COOKIE_NAME); // Clear invalid cookie
+        } catch (e) {
+          console.error("Error deleting cookie:", e);
+        }
+        setJsonResponse(ctx, 401, { error: "Invalid token format" });
+        return;
+      }
+      
       const key = await getJwtKey();
       const payload = await verify(token, key);
       console.log("Token valid for user_id:", payload.user_id);
@@ -289,6 +336,12 @@ router.get("/me", async (ctx) => {
       setJsonResponse(ctx, 200, { user: users[0] });
     } catch (error) {
       console.error("Token validation error:", error);
+      // Clear the invalid cookie
+      try {
+        await ctx.cookies.delete(COOKIE_NAME);
+      } catch (e) {
+        console.error("Error deleting cookie:", e);
+      }
       setJsonResponse(ctx, 401, { error: "Invalid or expired token: " + error.message });
     }
   } catch (error) {

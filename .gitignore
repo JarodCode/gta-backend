@@ -16,3 +16,12 @@ deno-dir/
 # Environnement
 .env
 .env.*
+
+# Node.js (should not be used, but just in case)
+node_modules/
+package.json
+package-lock.json
+npm-debug.log*
+
+# Redundant directories
+frontend/

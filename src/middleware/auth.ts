@@ -1,6 +1,6 @@
 // auth.ts - Authentication middleware
 import { Context, Next } from "https://deno.land/x/oak@v17.1.4/mod.ts";
-import { verifyJwt } from "https://deno.land/x/djwt/mod.ts";
+import { verify } from "https://deno.land/x/djwt@v3.0.0/mod.ts";
 import { getJwtSecret } from "../routes/auth.ts";
 
 export async function authMiddleware(ctx: Context, next: Next) {
@@ -15,8 +15,22 @@ export async function authMiddleware(ctx: Context, next: Next) {
     const token = authHeader.split(" ")[1];
     
     try {
+      // Get the JWT secret
+      const secretKey = await getJwtSecret();
+      
+      // Create crypto key for verification
+      const encoder = new TextEncoder();
+      const keyData = encoder.encode(secretKey);
+      const key = await crypto.subtle.importKey(
+        "raw",
+        keyData,
+        { name: "HMAC", hash: "SHA-256" },
+        true,
+        ["verify"]
+      );
+      
       // Verify the token
-      const payload = await verifyJwt(token, await getJwtSecret());
+      const payload = await verify(token, key);
       
       // Set the user in the state for use in downstream handlers
       ctx.state.user = payload;
